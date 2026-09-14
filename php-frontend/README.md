@@ -10,9 +10,12 @@ php-frontend/
 │   ├── index.php       # 主路由文件
 │   ├── api.php         # API代理文件
 │   └── .htaccess       # Apache URL重写规则
-├── includes/           # PHP页面模板
+├── includes/           # PHP页面模板（位于Web根目录之外，不能通过URL直接访问）
+│   ├── config.php      # 配置 + 会话Cookie参数
+│   ├── lib.php         # 服务端会话守卫/后端调用
+│   ├── content.php     # ★ 真正的受保护内容片段（仅守卫通过后可包含）
 │   ├── gate.php        # 卡密验证页面
-│   └── home.php        # 主页面
+│   └── home.php        # 主页面（薄壳，不含任何受保护内容）
 └── assets/             # 静态资源
     ├── css/
     │   └── styles.css  # 样式文件（Tailwind风格）
@@ -35,17 +38,20 @@ php-frontend/
    - Toast通知
 
 2. **主页面 (/home)**
-   - 验证成功展示
-   - 显示有效期
-   - 30秒心跳检测
-   - 自动登出（token失效时）
+   - 页面本身只是**不含敏感内容的薄壳**（加载占位 + 加载脚本）
+   - 真正内容由受控接口 `GET /home/content` 在**服务端逐请求校验**会话与卡密状态后返回 HTML 片段
+   - 未验证 / token失效 / 卡密被封禁或过期：接口返回 401，前端清凭证并跳回 `/gate`
+   - 直接在浏览器打开 `/home/content`（或 curl）同样必须通过校验，无法绕过
+   - 30秒心跳检测（仅辅助发现失效，非安全边界）
    - 手动退出登录
 
-3. **认证系统**
-   - localStorage管理
-   - Token存储
-   - 自动过期检测
-   - 路由守卫
+3. **认证系统（服务端会话为真正的安全边界）**
+   - 验卡密流程：`/api/auth/verify-key` 换 token → `POST /auth/session` 由服务端校验 token 后建立 HttpOnly Cookie 会话
+   - token 同时存 localStorage，仅用于业务 API 的 `Authorization` 头与前端跳转体验
+   - 服务端会话 Cookie 为 HttpOnly + SameSite=Lax，JS 无法读取
+   - `includes/lib.php` 中的 `session_guard()` 每次请求都校验：会话存在 + token有效 + 卡密 active + 未过期
+   - 统一容器内守卫直接在进程内查询后端 SQLite（复用 `App\TokenManager`），独立部署时回退为 HTTP 调用后端 `/api/auth/ping`
+   - 退出时 `POST /auth/logout` 吊销后端 token 并销毁会话
 
 4. **UI/UX**
    - 完整覆盖当前前端所需的界面与交互
@@ -157,11 +163,17 @@ php -S localhost:3000
 
 ## 注意事项
 
-1. **localStorage**：确保浏览器允许本地存储
+0. **安全红线（修改前必读）**
+   - **不要**把任何受保护内容直接写回 `/home` 页面或任何不经守卫的静态文件；
+   - 受保护内容只能放在 `includes/content.php`（Web 根之外），并由 `/home/content` 路由在 `session_guard()` 通过后输出；
+   - 仅在首页用 JS / CSS 遮罩、或只检查 localStorage 都不算保护——直接打开内容地址必须仍然返回 401；
+   - 新增受保护接口时，在输出前调用 `session_guard()`，业务 API 继续走后端 token 中间件。
+
+1. **localStorage**：localStorage 中的 token 只用于业务 API 调用，不是访问控制依据；真正的凭证是服务端 HttpOnly 会话
 2. **CORS问题**：如果后端API在不同域名，需要配置CORS
-3. **HTTPS**：生产环境建议使用HTTPS
+3. **HTTPS**：生产环境建议使用HTTPS，并将 `config.php` 中 `session.cookie_secure` 置为 1
 4. **错误日志**：检查PHP错误日志以排查问题
-5. **性能优化**：可以添加缓存、压缩等优化
+5. **性能优化**：会话守卫每次内容请求都会校验卡密状态（封禁/过期可即时生效），请勿在守卫前加可绕过校验的长缓存
 
 ## 故障排除
 

@@ -4,6 +4,7 @@
   "description": "E2E tests for card-code admin system",
   "scripts": {
     "check:frontend-protection": "node scripts/check-frontend-protection.mjs",
+    "check:content-protection": "node scripts/check-content-protection.mjs",
     "protect:frontend": "node scripts/protect-frontend.mjs",
     "test": "playwright test",
     "test:headed": "playwright test --headed",
